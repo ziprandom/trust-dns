@@ -9,4 +9,5 @@ cd ${trust_dns_dir:?}
 cargo test --manifest-path crates/proto/Cargo.toml --features mdns
 cargo test --manifest-path crates/client/Cargo.toml --features mdns
 cargo test --manifest-path crates/resolver/Cargo.toml --features mdns
+cargo test --manifest-path bin/Cargo.toml --features mdns
 cargo test --manifest-path tests/integration-tests/Cargo.toml --features mdns
