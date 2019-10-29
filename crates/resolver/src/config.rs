@@ -6,11 +6,25 @@
 // copied, modified, or distributed except according to those terms.
 
 //! Configuration for a resolver
+#[cfg(feature = "dns-over-rustls")]
+use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 
+#[cfg(feature = "dns-over-rustls")]
+use std::sync::Arc;
+
 use proto::rr::Name;
+
+#[cfg(feature = "dns-over-rustls")]
+use rustls::ClientConfig;
+
+#[cfg(all(feature = "serde-config", feature = "dns-over-rustls"))]
+use serde::{
+    de::{Deserialize as DeserializeT, Deserializer},
+    ser::{Serialize as SerializeT, Serializer},
+};
 
 /// Configuration for the upstream nameservers to use for resolution
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,6 +190,40 @@ impl ResolverConfig {
     pub fn name_servers(&self) -> &[NameServerConfig] {
         &self.name_servers
     }
+
+    /// return the associated TlsClientConfig
+    #[cfg(feature = "dns-over-rustls")]
+    pub fn client_config(&self) -> &Option<TlsClientConfig> {
+        &self.name_servers.1
+    }
+
+    /// adds the [`rustls::ClientConf`] for every configured NameServer
+    /// of the Resolver.
+    ///
+    /// ```
+    /// extern crate rustls;
+    /// extern crate webpki_roots;
+    /// use std::sync::Arc;
+    ///
+    /// use rustls::{ClientConfig, ProtocolVersion, RootCertStore};
+    /// use trust_dns_resolver::config::ResolverConfig;
+    /// use webpki_roots;
+    ///
+    /// let mut root_store = RootCertStore::empty();
+    /// root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    /// let versions = vec![ProtocolVersion::TLSv1_2];
+    ///
+    /// let mut client_config = ClientConfig::new();
+    /// client_config.root_store = root_store;
+    /// client_config.versions = versions;
+    ///
+    /// let mut resolver_config = ResolverConfig::quad9_tls();
+    /// resolver_config.set_tls_client_config(Arc::new(client_config));
+    /// ```
+    #[cfg(feature = "dns-over-rustls")]
+    pub fn set_tls_client_config(&mut self, client_config: Arc<ClientConfig>) {
+        self.name_servers = self.name_servers.clone().with_client_config(client_config);
+    }
 }
 
 impl Default for ResolverConfig {
@@ -241,6 +289,29 @@ impl Protocol {
     }
 }
 
+#[cfg(feature = "dns-over-rustls")]
+#[derive(Clone)]
+/// a compatibility wrapper around rustls
+/// ClientConfig
+pub struct TlsClientConfig(pub Arc<ClientConfig>);
+
+#[cfg(feature = "dns-over-rustls")]
+impl std::cmp::PartialEq for TlsClientConfig {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(feature = "dns-over-rustls")]
+impl std::cmp::Eq for TlsClientConfig {}
+
+#[cfg(feature = "dns-over-rustls")]
+impl std::fmt::Debug for TlsClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "rustls client config")
+    }
+}
+
 /// Configuration for the NameServer
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde-config", derive(Serialize, Deserialize))]
@@ -251,12 +322,42 @@ pub struct NameServerConfig {
     pub protocol: Protocol,
     /// SPKI name, only relevant for TLS connections
     pub tls_dns_name: Option<String>,
+    #[cfg(feature = "dns-over-rustls")]
+    #[cfg_attr(feature = "serde-config", serde(skip))]
+    /// optional configuration for the tls client
+    pub tls_config: Option<TlsClientConfig>,
 }
 
 /// A set of name_servers to associate with a [`ResolverConfig`].
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "serde-config", derive(Serialize, Deserialize))]
-pub struct NameServerConfigGroup(Vec<NameServerConfig>);
+#[cfg_attr(
+    all(feature = "serde-config", not(feature = "dns-over-rustls")),
+    derive(Serialize, Deserialize)
+)]
+pub struct NameServerConfigGroup(
+    Vec<NameServerConfig>,
+    #[cfg(feature = "dns-over-rustls")] Option<TlsClientConfig>,
+);
+
+#[cfg(all(feature = "serde-config", feature = "dns-over-rustls"))]
+impl SerializeT for NameServerConfigGroup {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+#[cfg(all(feature = "serde-config", feature = "dns-over-rustls"))]
+impl<'de> DeserializeT<'de> for NameServerConfigGroup {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::deserialize(deserializer).map(|nameservers| Self(nameservers, None))
+    }
+}
 
 impl NameServerConfigGroup {
     /// Creates a new `NameServerConfigGroup` with a default size of 2
@@ -268,7 +369,11 @@ impl NameServerConfigGroup {
 
     /// Creates a new `NameServiceConfigGroup` with the specified capacity
     pub fn with_capacity(capacity: usize) -> Self {
-        NameServerConfigGroup(Vec::with_capacity(capacity))
+        NameServerConfigGroup(
+            Vec::with_capacity(capacity),
+            #[cfg(feature = "dns-over-rustls")]
+            None,
+        )
     }
 
     /// Configure a NameServer address and port
@@ -282,11 +387,15 @@ impl NameServerConfigGroup {
                 socket_addr: SocketAddr::new(*ip, port),
                 protocol: Protocol::Udp,
                 tls_dns_name: None,
+                #[cfg(feature = "dns-over-rustls")]
+                tls_config: None,
             };
             let tcp = NameServerConfig {
                 socket_addr: SocketAddr::new(*ip, port),
                 protocol: Protocol::Tcp,
                 tls_dns_name: None,
+                #[cfg(feature = "dns-over-rustls")]
+                tls_config: None,
             };
 
             name_servers.push(udp);
@@ -312,6 +421,8 @@ impl NameServerConfigGroup {
                 socket_addr: SocketAddr::new(*ip, port),
                 protocol,
                 tls_dns_name: Some(tls_dns_name.clone()),
+                #[cfg(feature = "dns-over-rustls")]
+                tls_config: None,
             };
 
             name_servers.push(config);
@@ -443,7 +554,20 @@ impl NameServerConfigGroup {
     /// assert!(group.iter().any(|c| c.socket_addr == SocketAddr::new(Ipv4Addr::new(9, 9, 9, 9).into(), 53)));
     /// ```
     pub fn merge(&mut self, mut other: Self) {
-        self.append(&mut other)
+        #[cfg(not(feature = "dns-over-rustls"))]
+        {
+            self.append(&mut other);
+        }
+        #[cfg(feature = "dns-over-rustls")]
+        {
+            self.0.append(&mut other);
+        }
+    }
+
+    #[cfg(feature = "dns-over-rustls")]
+    /// add a [`rustls::ClientConfig`]
+    pub fn with_client_config(self, client_config: Arc<ClientConfig>) -> Self {
+        Self(self.0, Some(TlsClientConfig(client_config)))
     }
 }
 
@@ -468,7 +592,14 @@ impl DerefMut for NameServerConfigGroup {
 
 impl From<Vec<NameServerConfig>> for NameServerConfigGroup {
     fn from(configs: Vec<NameServerConfig>) -> Self {
-        NameServerConfigGroup(configs)
+        #[cfg(not(feature = "dns-over-rustls"))]
+        {
+            NameServerConfigGroup(configs)
+        }
+        #[cfg(feature = "dns-over-rustls")]
+        {
+            NameServerConfigGroup(configs, None)
+        }
     }
 }
 

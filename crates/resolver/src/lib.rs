@@ -195,6 +195,10 @@ extern crate lazy_static;
 extern crate log;
 extern crate lru_cache;
 extern crate resolv_conf;
+#[cfg(feature = "dns-over-rustls")]
+extern crate rustls;
+#[cfg(feature = "dns-over-rustls")]
+extern crate webpki_roots;
 #[cfg(feature = "serde-config")]
 #[macro_use]
 extern crate serde;

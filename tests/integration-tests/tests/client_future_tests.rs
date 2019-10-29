@@ -132,6 +132,8 @@ fn test_query_https() {
     use rustls::{ClientConfig, ProtocolVersion, RootCertStore};
     use trust_dns_https::HttpsClientStreamBuilder;
 
+    const ALPN_H2: &[u8] = b"h2";
+
     let mut io_loop = Runtime::new().unwrap();
     let addr: SocketAddr = ("1.1.1.1", 443).to_socket_addrs().unwrap().next().unwrap();
 
@@ -143,8 +145,9 @@ fn test_query_https() {
     let mut client_config = ClientConfig::new();
     client_config.root_store = root_store;
     client_config.versions = versions;
+    client_config.alpn_protocols.push(ALPN_H2.to_vec());
 
-    let https_builder = HttpsClientStreamBuilder::with_client_config(client_config);
+    let https_builder = HttpsClientStreamBuilder::with_client_config(Arc::new(client_config));
     let (bg, mut client) =
         ClientFuture::connect(https_builder.build(addr, "cloudflare-dns.com".to_string()));
     io_loop.spawn(bg);
@@ -229,7 +232,7 @@ fn create_sig0_ready_client(
 ) -> (
     ClientFuture<
         DnsMultiplexerConnect<
-            Box<Future<Item = TestClientStream, Error = ProtoError> + Send>,
+            Box<dyn Future<Item = TestClientStream, Error = ProtoError> + Send>,
             TestClientStream,
             Signer,
         >,

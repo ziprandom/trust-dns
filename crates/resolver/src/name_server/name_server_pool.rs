@@ -51,11 +51,16 @@ impl<C: DnsHandle + 'static, P: ConnectionProvider<ConnHandle = C> + 'static> Na
             .iter()
             .filter(|ns_config| ns_config.protocol.is_datagram())
             .map(|ns_config| {
-                NameServer::<C, P>::new_with_provider(
-                    ns_config.clone(),
-                    *options,
-                    conn_provider.clone(),
-                )
+                #[cfg(feature = "dns-over-rustls")]
+                let ns_config = {
+                    let mut ns_config = ns_config.clone();
+                    ns_config.tls_config = config.client_config().clone();
+                    ns_config
+                };
+                #[cfg(not(feature = "dns-over-rustls"))]
+                let ns_config = { ns_config.clone() };
+
+                NameServer::<C, P>::new_with_provider(ns_config, *options, conn_provider.clone())
             })
             .collect();
 
@@ -64,11 +69,16 @@ impl<C: DnsHandle + 'static, P: ConnectionProvider<ConnHandle = C> + 'static> Na
             .iter()
             .filter(|ns_config| ns_config.protocol.is_stream())
             .map(|ns_config| {
-                NameServer::<C, P>::new_with_provider(
-                    ns_config.clone(),
-                    *options,
-                    conn_provider.clone(),
-                )
+                #[cfg(feature = "dns-over-rustls")]
+                let ns_config = {
+                    let mut ns_config = ns_config.clone();
+                    ns_config.tls_config = config.client_config().clone();
+                    ns_config
+                };
+                #[cfg(not(feature = "dns-over-rustls"))]
+                let ns_config = { ns_config.clone() };
+
+                NameServer::<C, P>::new_with_provider(ns_config, *options, conn_provider.clone())
             })
             .collect();
 
@@ -398,12 +408,16 @@ mod tests {
             socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 252)), 253),
             protocol: Protocol::Udp,
             tls_dns_name: None,
+            #[cfg(feature = "dns-over-rustls")]
+            tls_config: None,
         };
 
         let config2 = NameServerConfig {
             socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53),
             protocol: Protocol::Udp,
             tls_dns_name: None,
+            #[cfg(feature = "dns-over-rustls")]
+            tls_config: None,
         };
 
         let mut resolver_config = ResolverConfig::new();

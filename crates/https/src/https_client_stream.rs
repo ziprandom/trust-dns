@@ -16,7 +16,7 @@ use h2::client::{Handshake, SendRequest};
 use h2::{self, RecvStream};
 use http::header;
 use http::{Response, StatusCode};
-use rustls::{Certificate, ClientConfig};
+use rustls::ClientConfig;
 use tokio_executor;
 use tokio_rustls::{client::TlsStream as TokioTlsClientStream, Connect, TlsConnector};
 use tokio_tcp::{ConnectFuture, TcpStream as TokioTcpStream};
@@ -381,30 +381,23 @@ impl Future for HttpsSerialResponseInner {
 /// A HTTPS connection builder for DNS-over-HTTPS
 #[derive(Clone)]
 pub struct HttpsClientStreamBuilder {
-    client_config: ClientConfig,
+    client_config: Arc<ClientConfig>,
 }
 
 impl HttpsClientStreamBuilder {
     /// Return a new builder for DNS-over-HTTPS
     pub fn new() -> HttpsClientStreamBuilder {
+        let mut client_config = ClientConfig::new();
+        client_config.alpn_protocols.push(ALPN_H2.to_vec());
+
         HttpsClientStreamBuilder {
-            client_config: ClientConfig::new(),
+            client_config: Arc::new(client_config),
         }
     }
 
     /// Constructs a new TlsStreamBuilder with the associated ClientConfig
-    pub fn with_client_config(client_config: ClientConfig) -> Self {
+    pub fn with_client_config(client_config: Arc<ClientConfig>) -> Self {
         HttpsClientStreamBuilder { client_config }
-    }
-
-    /// Add a custom trusted peer certificate or certificate authority.
-    ///
-    /// If this is the 'client' then the 'server' must have it associated as it's `identity`, or have had the `identity` signed by this certificate.
-    pub fn add_ca(&mut self, ca: Certificate) {
-        self.client_config
-            .root_store
-            .add(&ca)
-            .expect("bad certificate!");
     }
 
     /// Creates a new HttpsStream to the specified name_server
@@ -415,11 +408,14 @@ impl HttpsClientStreamBuilder {
     /// * `dns_name` - The DNS name, Subject Public Key Info (SPKI) name, as associated to a certificate
     /// * `loop_handle` - The reactor Core handle
     pub fn build(self, name_server: SocketAddr, dns_name: String) -> HttpsClientConnect {
-        let mut client_config = self.client_config;
-        client_config.alpn_protocols.push(ALPN_H2.to_vec());
+        assert!(self
+            .client_config
+            .alpn_protocols
+            .iter()
+            .any(|protocol| *protocol == ALPN_H2.to_vec()));
 
         let tls = TlsConfig {
-            client_config: Arc::new(client_config),
+            client_config: self.client_config,
             dns_name: Arc::new(dns_name),
         };
 
@@ -614,8 +610,9 @@ mod tests {
         let mut client_config = ClientConfig::new();
         client_config.root_store = root_store;
         client_config.versions = versions;
+        client_config.alpn_protocols.push(ALPN_H2.to_vec());
 
-        let https_builder = HttpsClientStreamBuilder::with_client_config(client_config);
+        let https_builder = HttpsClientStreamBuilder::with_client_config(Arc::new(client_config));
         let connect = https_builder.build(cloudflare, "cloudflare-dns.com".to_string());
 
         // tokio runtime stuff...

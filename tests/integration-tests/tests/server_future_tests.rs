@@ -66,7 +66,7 @@ fn test_server_www_udp() {
 
     assert!(client_result.is_ok(), "client failed: {:?}", client_result);
     server_continue.store(false, Ordering::Relaxed);
-    server_thread.join().unwrap();;
+    server_thread.join().unwrap();
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn test_server_www_tcp() {
 
     assert!(client_result.is_ok(), "client failed: {:?}", client_result);
     server_continue.store(false, Ordering::Relaxed);
-    server_thread.join().unwrap();;
+    server_thread.join().unwrap();
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn test_server_unknown_type() {
     );
 
     server_continue.store(false, Ordering::Relaxed);
-    server_thread.join().unwrap();;
+    server_thread.join().unwrap();
 }
 
 #[cfg(all(feature = "dns-over-openssl", not(feature = "dns-over-rustls")))]
@@ -323,7 +323,7 @@ fn server_thread_tls(
     let mut io_loop = Runtime::new().unwrap();
     let server = ServerFuture::new(catalog);
     io_loop
-        .block_on::<Box<Future<Item = (), Error = io::Error> + Send>>(Box::new(future::lazy(
+        .block_on::<Box<dyn Future<Item = (), Error = io::Error> + Send>>(Box::new(future::lazy(
             || {
                 let pkcs12 = Pkcs12::from_der(&pkcs12_der)
                     .expect("bad pkcs12 der")
